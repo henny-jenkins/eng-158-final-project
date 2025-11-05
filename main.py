@@ -35,7 +35,7 @@ class SimParams:
 @dataclass
 class AnalysisPackage:
     """
-    dataclass to handle plotting for a pair of solutions for the dynamical system
+    dataclass to bundle both copies of the dynamics simulation with drug schedule
     """
     bone_marrow_soln: OdeSolution   # simulation from solve_ivp
     cancer_soln: OdeSolution        # simulation from solve_ivp
@@ -75,8 +75,10 @@ def main():
     t_span = (0, 21)
     t_eval = np.linspace(*t_span, SIM_STEPS)
     u_input = 0.5 * np.sin(t_eval) + 0.5   # arbitrary control signal for now — would obtain from optimizer for MPC or policy for RL
+    u_input_unforced = 0 * t_eval
     u = interp1d(t_eval, u_input, fill_value="extrapolate")    # pass control signal as anonymous func
-    sim_params = SimParams(s=1, rho=0)  # arbitrary values
+    u_unforced = interp1d(t_eval, u_input_unforced, fill_value="extrapolate")
+    sim_params = SimParams(s=1, rho=0)  # arbitrary values for now
 
     # simulate the system — 2 copies of 2D dynamical system (one for healthy population, one for cancerous population)
     sol_bm = solve_ivp(dynamics_pd,
@@ -84,18 +86,35 @@ def main():
                        bone_marrow_params.initial_conditions,
                        t_eval=t_eval,
                        args = (u, bone_marrow_params, sim_params))
-    print("simulated bone marrow cells")
     sol_breast_cancer = solve_ivp(dynamics_pd,
                        t_span,
                        breast_cancer_params.initial_conditions,
                        t_eval=t_eval,
                        args = (u, breast_cancer_params, sim_params))
-    print("simulated breast cancer cells")
     breast_cancer_simulation_results = AnalysisPackage(
             bone_marrow_soln=sol_bm,
             cancer_soln=sol_breast_cancer,
             drug_schedule=u_input
             )
+
+    # simulate unforced
+    sol_bm_unforced = solve_ivp(dynamics_pd,
+                       t_span,
+                       bone_marrow_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u_unforced, bone_marrow_params, sim_params))
+    sol_breast_cancer_unforced = solve_ivp(dynamics_pd,
+                       t_span,
+                       breast_cancer_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u_unforced, breast_cancer_params, sim_params))
+    breast_cancer_simulation_results_unforced = AnalysisPackage(
+            bone_marrow_soln=sol_bm_unforced,
+            cancer_soln=sol_breast_cancer_unforced,
+            drug_schedule=u_input_unforced
+            )
+
+    plot_sim(breast_cancer_simulation_results_unforced)
     plot_sim(breast_cancer_simulation_results)
 
 def plot_sim(sim_results: AnalysisPackage):
@@ -103,7 +122,7 @@ def plot_sim(sim_results: AnalysisPackage):
     function to handle plotting of results from a single simulation
     """
 
-    # pull out simulation data
+    # pull out simulation data as local variables
     time = sim_results.cancer_soln.t
     cancer_p = sim_results.cancer_soln.y[0, :]
     cancer_q = sim_results.cancer_soln.y[1, :]
@@ -117,16 +136,27 @@ def plot_sim(sim_results: AnalysisPackage):
     except:
         print("no concentration signal detected")
 
-    plt.figure()
-    plt.plot(time, cancer_p, label="P_cancer")
-    plt.plot(time, cancer_q, label="Q_cancer")
-    plt.plot(time, bonemarrow_p, label="P_bm")
-    plt.plot(time, bonemarrow_q, label="Q_bm")
-    plt.plot(time, u, label="Drug Schedule")
-    plt.xlabel("Time [days]")
-    plt.ylabel("Relative Cell Density / Dose Percentage")
-    plt.title("Cell Populations Under Chemotherapeutic Drug Schedule")
-    plt.legend()
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    # cancer plot
+    axes[0].plot(time, cancer_p, label="P_cancer")
+    axes[0].plot(time, cancer_q, label="Q_cancer")
+    axes[0].plot(time, u, label="Drug Schedule")
+    axes[0].set_title("Cancer Cells Under Drug Schedule")
+    axes[0].set_xlabel("Time [days]")
+    axes[0].set_ylim([-0.1, 1])
+    axes[0].set_ylabel("Cell Density / Dosing Percentage")
+    axes[0].legend(loc='upper right')
+
+    # healthy cell plot
+    axes[1].plot(time, bonemarrow_p, label="P_bm")
+    axes[1].plot(time, bonemarrow_q, label="Q_bm")
+    axes[1].plot(time, u, label="Drug Schedule")
+    axes[1].set_title("Bone Marrow Cells Under Drug Schedule")
+    axes[1].set_xlabel("Time [days]")
+    axes[1].set_ylim([-0.1, 1])
+    axes[1].set_ylabel("Cell Density / Dosing Percentage")
+    axes[1].legend(loc='upper right')
+
     plt.show()
 
 
