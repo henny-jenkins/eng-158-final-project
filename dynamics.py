@@ -16,9 +16,10 @@ def dynamics_pd(t, x_vec, u, cell_params, sim_params):
     beta = cell_params.beta
     lambda_param = cell_params.lambda_param
     s = sim_params.s
+    u_val = u(t)    # u is an anonymous func, so need to query @ time=t to get float
 
     # return state derivatives
-    p_dot = ((gamma - delta - alpha - (s * u)) * p) + (beta * q)
+    p_dot = ((gamma - delta - alpha - (s * u_val)) * p) + (beta * q)
     q_dot = (alpha * p) - ((beta + lambda_param) * q)
     x_dot = np.array([p_dot, q_dot])
     return x_dot
@@ -41,10 +42,11 @@ def dynamics_pd_pk(t, x_vec, u, cell_params, sim_params):
     lambda_param = cell_params.lambda_param
     s = sim_params.s
     rho = sim_params.rho
+    u_val = u(t)    # u is an anonymous func, so need to query @ time=t to get float
 
     # return state derivatives
     p_dot = ((gamma - delta - alpha - (s * c)) * p) + (beta * q)
     q_dot = (alpha * p) - ((beta + lambda_param) * q)
-    c_dot = (- rho * c) + u
+    c_dot = (- rho * c) + u_val
     x_dot = np.array([p_dot, q_dot, c_dot])
     return x_dot

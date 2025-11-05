@@ -1,7 +1,7 @@
 from dynamics import dynamics_pd, dynamics_pd_pk
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import matplotlib.pyplot as plt 
-from scipy.integrate import solve_ivp   # for the dynamics simulation
+from scipy.integrate import solve_ivp, OdeSolution   # for the dynamics simulation
 from scipy.interpolate import interp1d
 import numpy as np
 
@@ -15,6 +15,14 @@ class CellPopulationParams:
     alpha: float            # proliferative -> quiscent transition coeff.
     beta: float             # quiescent -> proliferative transition coeff.
     lambda_param: float     # quiescent cell die off coeff.
+    rho_star_p: float       # for calculating initial conditions
+    initial_conditions: np.ndarray = field(init=False)
+
+    def __post_init__(self):
+        """
+        calculate population initial conditions [p0, q0] based on rho_star_p, per Eastman et al. 2021
+        """
+        self.initial_conditions = np.array([self.rho_star_p, 1 - self.rho_star_p])
 
 @dataclass
 class SimParams:
@@ -24,6 +32,16 @@ class SimParams:
     s: float                # dosing strength parameter
     rho: float | None       # drug clearance rate
 
+@dataclass
+class AnalysisPackage:
+    """
+    dataclass to handle plotting for a pair of solutions for the dynamical system
+    """
+    bone_marrow_soln: OdeSolution   # simulation from solve_ivp
+    cancer_soln: OdeSolution        # simulation from solve_ivp
+    drug_schedule: np.ndarray       # time-varying control signal
+
+
 def main():
     # instantiate parameters for each cell population from Eastman et al. 2021
     bone_marrow_params = CellPopulationParams(
@@ -31,30 +49,86 @@ def main():
             delta=0.000,
             alpha=5.643,
             beta=0.480,
-            lambda_param=0.164
+            lambda_param=0.164,
+            rho_star_p=0.103
             )
     breast_cancer_params = CellPopulationParams(
             gamma=0.500,
             delta=0.477,
             alpha=0.218,
             beta=0.050,
-            lambda_param=0.000
+            lambda_param=0.000,
+            rho_star_p=0.200
             )
     ovarian_cancer_params = CellPopulationParams(
             gamma=0.6685,
             delta=0.4597,
             alpha=0.2225,
             beta=0.0500,
-            lambda_param=0.0000
+            lambda_param=0.0000,
+            rho_star_p=0.3600
             )
 
     # define simulation configuration
-    SIMULATION_TIME = 21    # [days?]
+    SIMULATION_TIME = 21    # [days]
     SIM_STEPS = 1000
-    t_input = np.linspace(0, SIMULATION_TIME, SIM_STEPS)
-    u_input = np.sin(t_input)   # arbitrary control signal for now — would obtain from optimizer for MPC or policy for RL
-    u = interp1d(t_input, u_input, fill_value="extrapolate")
-    print("everything working so far")
+    t_span = (0, 21)
+    t_eval = np.linspace(*t_span, SIM_STEPS)
+    u_input = 0.5 * np.sin(t_eval) + 0.5   # arbitrary control signal for now — would obtain from optimizer for MPC or policy for RL
+    u = interp1d(t_eval, u_input, fill_value="extrapolate")    # pass control signal as anonymous func
+    sim_params = SimParams(s=1, rho=0)  # arbitrary values
+
+    # simulate the system — 2 copies of 2D dynamical system (one for healthy population, one for cancerous population)
+    sol_bm = solve_ivp(dynamics_pd,
+                       t_span,
+                       bone_marrow_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u, bone_marrow_params, sim_params))
+    print("simulated bone marrow cells")
+    sol_breast_cancer = solve_ivp(dynamics_pd,
+                       t_span,
+                       breast_cancer_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u, breast_cancer_params, sim_params))
+    print("simulated breast cancer cells")
+    breast_cancer_simulation_results = AnalysisPackage(
+            bone_marrow_soln=sol_bm,
+            cancer_soln=sol_breast_cancer,
+            drug_schedule=u_input
+            )
+    plot_sim(breast_cancer_simulation_results)
+
+def plot_sim(sim_results: AnalysisPackage):
+    """
+    function to handle plotting of results from a single simulation
+    """
+
+    # pull out simulation data
+    time = sim_results.cancer_soln.t
+    cancer_p = sim_results.cancer_soln.y[0, :]
+    cancer_q = sim_results.cancer_soln.y[1, :]
+    bonemarrow_p = sim_results.bone_marrow_soln.y[0, :]
+    bonemarrow_q = sim_results.bone_marrow_soln.y[1, :]
+    u = sim_results.drug_schedule
+    
+    try:
+        cancer_c = sim_results.cancer_soln.y[2, :]
+        bonemarrow_c = sim_results.bone_marrow_soln.y[2, :]
+    except:
+        print("no concentration signal detected")
+
+    plt.figure()
+    plt.plot(time, cancer_p, label="P_cancer")
+    plt.plot(time, cancer_q, label="Q_cancer")
+    plt.plot(time, bonemarrow_p, label="P_bm")
+    plt.plot(time, bonemarrow_q, label="Q_bm")
+    plt.plot(time, u, label="Drug Schedule")
+    plt.xlabel("Time [days]")
+    plt.ylabel("Relative Cell Density / Dose Percentage")
+    plt.title("Cell Populations Under Chemotherapeutic Drug Schedule")
+    plt.legend()
+    plt.show()
+
 
 if __name__ == "__main__":
     main()
