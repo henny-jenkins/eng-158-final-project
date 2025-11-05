@@ -5,6 +5,14 @@ from scipy.integrate import solve_ivp, OdeSolution   # for the dynamics simulati
 from scipy.interpolate import interp1d
 import numpy as np
 
+def calc_rho(t_half_hrs: float):
+    """
+    this method calculates the drug clearance rate rho [days^-1] from a drug's half life [hrs]
+    """
+    t_half_days = t_half_hrs / 24.0
+    rho = np.log(2) / t_half_days
+    return rho
+
 @dataclass
 class CellPopulationParams:
     """
@@ -20,9 +28,9 @@ class CellPopulationParams:
 
     def __post_init__(self):
         """
-        calculate population initial conditions [p0, q0] based on rho_star_p, per Eastman et al. 2021
+        calculate population initial conditions [p0, q0, c0] based on rho_star_p, per Eastman et al. 2021
         """
-        self.initial_conditions = np.array([self.rho_star_p, 1 - self.rho_star_p])
+        self.initial_conditions = np.array([self.rho_star_p, 1 - self.rho_star_p, 0])
 
 @dataclass
 class SimParams:
@@ -78,17 +86,21 @@ def main():
     u_input_unforced = 0 * t_eval
     u = interp1d(t_eval, u_input, fill_value="extrapolate")    # pass control signal as anonymous func
     u_unforced = interp1d(t_eval, u_input_unforced, fill_value="extrapolate")
-    sim_params = SimParams(s=1, rho=0)  # arbitrary values for now
 
-    # simulate the system — 2 copies of 2D dynamical system (one for healthy population, one for cancerous population)
+    # select chemotherapeutic agent (somewhat arbitrary)
+    T_HALF_HRS_PACLITAXEL = 10           # [hrs]
+    rho_paclitaxel = calc_rho(T_HALF_HRS_PACLITAXEL)    # [days^-1]
+    sim_params = SimParams(s=1, rho=rho_paclitaxel)
+
+    # simulate the PD system under arbitrary control signal — 2 copies of 2D dynamical system (one for healthy population, one for cancerous population)
     sol_bm = solve_ivp(dynamics_pd,
                        t_span,
-                       bone_marrow_params.initial_conditions,
+                       bone_marrow_params.initial_conditions[0:-1],
                        t_eval=t_eval,
                        args = (u, bone_marrow_params, sim_params))
     sol_breast_cancer = solve_ivp(dynamics_pd,
                        t_span,
-                       breast_cancer_params.initial_conditions,
+                       breast_cancer_params.initial_conditions[0:-1],
                        t_eval=t_eval,
                        args = (u, breast_cancer_params, sim_params))
     breast_cancer_simulation_results = AnalysisPackage(
@@ -97,15 +109,15 @@ def main():
             drug_schedule=u_input
             )
 
-    # simulate unforced
+    # simulate PD unforced
     sol_bm_unforced = solve_ivp(dynamics_pd,
                        t_span,
-                       bone_marrow_params.initial_conditions,
+                       bone_marrow_params.initial_conditions[0:-1],
                        t_eval=t_eval,
                        args = (u_unforced, bone_marrow_params, sim_params))
     sol_breast_cancer_unforced = solve_ivp(dynamics_pd,
                        t_span,
-                       breast_cancer_params.initial_conditions,
+                       breast_cancer_params.initial_conditions[0:-1],
                        t_eval=t_eval,
                        args = (u_unforced, breast_cancer_params, sim_params))
     breast_cancer_simulation_results_unforced = AnalysisPackage(
@@ -114,8 +126,27 @@ def main():
             drug_schedule=u_input_unforced
             )
 
+    # simulate PK under arbitrary control signal
+    sol_bm_pk = solve_ivp(dynamics_pd_pk,
+                       t_span,
+                       bone_marrow_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u, bone_marrow_params, sim_params))
+    sol_breast_cancer_pk = solve_ivp(dynamics_pd_pk,
+                       t_span,
+                       breast_cancer_params.initial_conditions,
+                       t_eval=t_eval,
+                       args = (u, breast_cancer_params, sim_params))
+    breast_cancer_simulation_results_pk = AnalysisPackage(
+            bone_marrow_soln=sol_bm_pk,
+            cancer_soln=sol_breast_cancer_pk,
+            drug_schedule=u_input
+            )
+
+    # plot all simulations
     plot_sim(breast_cancer_simulation_results_unforced)
     plot_sim(breast_cancer_simulation_results)
+    plot_sim(breast_cancer_simulation_results_pk)
 
 def plot_sim(sim_results: AnalysisPackage):
     """
@@ -131,10 +162,12 @@ def plot_sim(sim_results: AnalysisPackage):
     u = sim_results.drug_schedule
     
     try:
+        is_pk = True
         cancer_c = sim_results.cancer_soln.y[2, :]
         bonemarrow_c = sim_results.bone_marrow_soln.y[2, :]
     except:
         print("no concentration signal detected")
+        is_pk = False
 
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
     # cancer plot
@@ -143,9 +176,7 @@ def plot_sim(sim_results: AnalysisPackage):
     axes[0].plot(time, u, label="Drug Schedule")
     axes[0].set_title("Cancer Cells Under Drug Schedule")
     axes[0].set_xlabel("Time [days]")
-    axes[0].set_ylim([-0.1, 1])
-    axes[0].set_ylabel("Cell Density / Dosing Percentage")
-    axes[0].legend(loc='upper right')
+    axes[0].set_ylabel("Cell Density / Infusion Fraction")
 
     # healthy cell plot
     axes[1].plot(time, bonemarrow_p, label="P_bm")
@@ -153,10 +184,21 @@ def plot_sim(sim_results: AnalysisPackage):
     axes[1].plot(time, u, label="Drug Schedule")
     axes[1].set_title("Bone Marrow Cells Under Drug Schedule")
     axes[1].set_xlabel("Time [days]")
-    axes[1].set_ylim([-0.1, 1])
-    axes[1].set_ylabel("Cell Density / Dosing Percentage")
-    axes[1].legend(loc='upper right')
+    axes[1].set_ylabel("Cell Density / Infusion Fraction")
 
+    if is_pk:
+        # plot the concentration state if it's available
+        axes2 = axes[0].twinx()
+        axes2.plot(time, cancer_c, color="k", label="C_cancer")
+        axes2.set_ylabel("Relative Drug Concentration")
+        axes2.legend(loc="upper right")
+        axes3 = axes[1].twinx()
+        axes3.plot(time, bonemarrow_c, color="k", label="C_bm")
+        axes3.set_ylabel("Relative Drug Concentration")
+        axes3.legend(loc="upper right")
+
+    axes[0].legend(loc='upper left')
+    axes[1].legend(loc='upper left')
     plt.show()
 
 

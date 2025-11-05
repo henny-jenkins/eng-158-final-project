@@ -26,7 +26,7 @@ def dynamics_pd(t, x_vec, u, cell_params, sim_params):
 
 def dynamics_pd_pk(t, x_vec, u, cell_params, sim_params):
     """
-    extended PD model to include PK
+    extended PD model to include PK. In this model, u represents a fraction of a max infusion rate and c represents a relative concentration of a chemotherapeutic agent that clears from the body on the timescale of realistically used chemotherapeutic drugs
     """
 
     # specify state variables
