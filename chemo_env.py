@@ -59,7 +59,7 @@ class ChemotherapyEnv:
         dt: float = 0.05,          # time step [days]
         t_max: float = 21.0,       # horizon [days]
         t_half_hrs: float = 10.0,  # Paclitaxel half-life
-        reward_b: float = 1,
+        reward_b: float = 1,        # bone marrow vs cancer balance factor (must be non-negative)
         seed: int | None = None,
     ):
         self.rng = np.random.default_rng(seed)
@@ -92,10 +92,6 @@ class ChemotherapyEnv:
 
         # Reward weights
         self.reward_b = reward_b
-
-        # Termination thresholds
-        self.min_bm_fraction = 0.2    # if bone marrow P+Q < this, episode ends (toxicity)
-        self.max_cancer_fraction = 2.0  # if cancer P+Q > this, treat as failure
 
         # Internal state
         self.t = 0.0
@@ -252,14 +248,6 @@ class ChemotherapyEnv:
         if self.t >= self.t_max:
             done = True
             info["terminal_reason"] = "time_limit"
-
-        if bm_load < self.min_bm_fraction:
-            done = True
-            info["terminal_reason"] = "severe_toxicity"
-
-        if cancer_load > self.max_cancer_fraction:
-            done = True
-            info["terminal_reason"] = "uncontrolled_tumor"
 
         return done, info
 
