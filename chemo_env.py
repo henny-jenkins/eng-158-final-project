@@ -59,8 +59,7 @@ class ChemotherapyEnv:
         dt: float = 0.05,          # time step [days]
         t_max: float = 21.0,       # horizon [days]
         t_half_hrs: float = 10.0,  # Paclitaxel half-life
-        reward_lambda_toxic: float = 10.0,
-        reward_lambda_u: float = 0.3,
+        reward_b: float = 1,
         seed: int | None = None,
     ):
         self.rng = np.random.default_rng(seed)
@@ -92,8 +91,7 @@ class ChemotherapyEnv:
         self.t_max = float(t_max)
 
         # Reward weights
-        self.lambda_toxic = reward_lambda_toxic
-        self.lambda_u = reward_lambda_u
+        self.reward_b = reward_b
 
         # Termination thresholds
         self.min_bm_fraction = 0.2    # if bone marrow P+Q < this, episode ends (toxicity)
@@ -139,13 +137,13 @@ class ChemotherapyEnv:
 
         # Make action a constant over [t, t+dt] for both populations
         t_span = (self.t, self.t + self.dt)
-        t_eval = [self.t + self.dt]
+        t_eval = [self.t, self.t + self.dt] # eval at both endpoints for integral
 
         u = interp1d([self.t, self.t + self.dt], [u_scalar, u_scalar], fill_value="extrapolate")
 
         # Split current state
-        cancer_state = self.state[0:3]
-        bm_state = self.state[3:6]
+        cancer_state = self.state[0:3].copy()
+        bm_state = self.state[3:6].copy()
 
         # Integrate dynamics for cancer
         cancer_sol = solve_ivp(
@@ -168,39 +166,75 @@ class ChemotherapyEnv:
             atol=1e-8,
         )
 
-        # TODO: fix the state definition
-        new_cancer_state = cancer_sol.y[:, -1]
-        new_bm_state = bm_sol.y[:, -1]
-        new_state = np.concatenate([new_cancer_state, new_bm_state])
+        # extract start / end values for each compartment
+        # cancer_sol.y and bm_sol.y shapes: (3, 2)
+        cancer_start = cancer_sol.y[:, 0]
+        cancer_end = cancer_sol.y[:, -1]
+        bm_start = bm_sol.y[:, 0]
+        bm_end = bm_sol.y[:, -1]
 
-        # Clamp to non-negative to avoid tiny numerical negatives
-        new_state = np.maximum(new_state, 0.0)
+        # set new (flat) state to the end-of-step values
+        self.state = np.concatenate([cancer_end, bm_end]).astype(float)
 
-        self.state = new_state
+        # advance time
         self.t += self.dt
 
-        reward = self._compute_reward(self.state, u_scalar)
+        # compute reward using trapezoidal approximation over the step:
+        # integral_{t}^{t+dt} [P_bm(s)+Q_bm(s)] ds  ≈ dt * 0.5*( (P_bm+Q_bm)_start + (P_bm+Q_bm)_end )
+        reward = self._compute_reward(bm_start, bm_end, u_scalar, self.dt)
+
         done, info = self._check_done(self.state)
+
+        # helpful debugging info
+        info.update({
+            "t": self.t,
+            "u": u_scalar,
+            "bm_start": bm_start.copy(),
+            "bm_end": bm_end.copy(),
+            "cancer_end": cancer_end.copy(),
+        })
 
         return self._normalize_state(self.state), float(reward), bool(done), info
 
-    def _compute_reward(self, state: np.ndarray, u_scalar: float) -> float:
+    def _compute_reward(self, bm_start: np.ndarray, bm_end: np.ndarray, u_scalar: float, dt: float) -> float:
         """
-        Reward encourages tumor suppression, bone marrow preservation,
-        and penalizes drug usage.
+        Implements the immediate reward from the paper (Eq. (4)):
+        R(s_t,a_t) = ∫_{t}^{t+dt} [ P_bm(s) + Q_bm(s) - (b/2)*(1-a)^2 ] ds
+
+        Here we approximate the integral for the state-dependent part with the trapezoid rule,
+        and multiply the constant action penalty by dt.
+
+        Parameters
+        ----------
+        bm_start : array-like, shape (3,)
+            bone marrow [P, Q, C] at the start of the step
+        bm_end : array-like, shape (3,)
+            bone marrow [P, Q, C] at the end of the step
+        u_scalar : float
+            scalar action in [0,1]
+        dt : float
+            step duration in days
+
+        Returns
+        -------
+        reward : float
         """
-        pc, qc, cc, pb, qb, cb = state
 
-        cancer_load = pc + qc
-        bm_load = pb + qb
+        # extract proliferative + quiescent fractions at start and end
+        pb0, qb0, _cb0 = bm_start
+        pb1, qb1, _cb1 = bm_end
 
-        # Main components
-        tumor_penalty = cancer_load  # we want this small
-        bm_reward = bm_load          # we want this large
+        bm_val_start = float(pb0 + qb0)
+        bm_val_end = float(pb1 + qb1)
 
-        drug_penalty = u_scalar ** 2
+        # trapezoid approx of integral of bone-marrow preservation term
+        bm_integral = dt * 0.5 * (bm_val_start + bm_val_end)
 
-        reward = -tumor_penalty + bm_reward - self.lambda_u * drug_penalty
+        # action penalty from paper: (b/2) * (1 - a)^2 integrated over dt
+        b = float(self.reward_b)  # paper's "b" weight
+        action_penalty_integral = dt * (0.5 * b * (1.0 - u_scalar) ** 2)
+
+        reward = bm_integral - action_penalty_integral
 
         return float(reward)
 
