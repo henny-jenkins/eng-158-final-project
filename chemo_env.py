@@ -59,7 +59,7 @@ class ChemotherapyEnv:
         dt: float = 0.05,          # time step [days]
         t_max: float = 21.0,       # horizon [days]
         t_half_hrs: float = 10.0,  # Paclitaxel half-life
-        reward_b: float = 1,        # bone marrow vs cancer balance factor (must be non-negative)
+        reward_b: float = 0.05,        # bone marrow vs cancer balance factor (must be non-negative)
         seed: int | None = None,
     ):
         self.rng = np.random.default_rng(seed)

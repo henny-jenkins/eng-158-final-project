@@ -68,54 +68,73 @@ def run_mpc(env, horizon=10):
     return np.array(state_hist), np.array(action_hist)
 
 
-def plot_trajectory(state_hist, action_hist, dt=0.05):
+def plot_multiple_b(state_histories, action_histories, b_values, dt=0.05):
     """
-    Plot the trajectories: cancer, bone marrow, and control action.
+    Plot multiple MPC runs with different reward_b values in columns.
+    
+    Parameters
+    ----------
+    state_histories : list of np.ndarray
+        Each element is (T,6) state history for one b value.
+    action_histories : list of np.ndarray
+        Each element is (T-1,) applied actions.
+    b_values : list of float
+        The reward_b values used for each run.
+    dt : float
+        Time step size.
     """
-    t = np.arange(state_hist.shape[0]) * dt
+    n_cols = len(b_values)
+    n_rows = 3  # cancer, bone marrow, control
 
-    pc = state_hist[:, 0]
-    qc = state_hist[:, 1]
-    cc = state_hist[:, 2]
+    fig, axs = plt.subplots(n_rows, n_cols, figsize=(5*n_cols, 8), sharex=True)
+    
+    for col, (state_hist, action_hist, b) in enumerate(zip(state_histories, action_histories, b_values)):
+        t = np.arange(state_hist.shape[0]) * dt
 
-    pb = state_hist[:, 3]
-    qb = state_hist[:, 4]
-    cb = state_hist[:, 5]
+        pc, qc, cc = state_hist[:,0], state_hist[:,1], state_hist[:,2]
+        pb, qb, cb = state_hist[:,3], state_hist[:,4], state_hist[:,5]
 
-    fig, axs = plt.subplots(3, 1, figsize=(10, 8), sharex=True)
+        # Cancer
+        axs[0, col].plot(t, pc, label='P_cancer')
+        axs[0, col].plot(t, qc, label='Q_cancer')
+        axs[0, col].plot(t, cc, label='C_cancer')
+        axs[0, col].set_ylabel("Cancer" if col == 0 else "")
+        axs[0, col].legend()
+        axs[0, col].grid(True)
 
-    # Cancer
-    axs[0].plot(t, pc, label='P_cancer')
-    axs[0].plot(t, qc, label='Q_cancer')
-    axs[0].plot(t, cc, label='C_cancer')
-    axs[0].set_ylabel("Cancer")
-    axs[0].legend()
-    axs[0].grid(True)
+        # Bone marrow
+        axs[1, col].plot(t, pb, label='P_bm')
+        axs[1, col].plot(t, qb, label='Q_bm')
+        axs[1, col].plot(t, cb, label='C_bm')
+        axs[1, col].set_ylabel("Bone Marrow" if col == 0 else "")
+        axs[1, col].legend()
+        axs[1, col].grid(True)
 
-    # Bone marrow
-    axs[1].plot(t, pb, label='P_bm')
-    axs[1].plot(t, qb, label='Q_bm')
-    axs[1].plot(t, cb, label='C_bm')
-    axs[1].set_ylabel("Bone Marrow")
-    axs[1].legend()
-    axs[1].grid(True)
+        # Control action
+        t_action = t[:-1]
+        axs[2, col].step(t_action, action_hist, where='post')
+        axs[2, col].set_ylabel("Infusion Rate (u)" if col == 0 else "")
+        axs[2, col].set_xlabel("Time [days]")
+        axs[2, col].grid(True)
 
-    # Control action
-    t_action = t[:-1]  # action applied at start of step
-    axs[2].step(t_action, action_hist, where='post')
-    axs[2].set_ylabel("Infusion Rate (u)")
-    axs[2].set_xlabel("Time [days]")
-    axs[2].grid(True)
+        # Add column title
+        axs[0, col].set_title(f"reward_b = {b}")
 
     plt.tight_layout()
+    plt.savefig("mpc.png")
     plt.show()
 
 
-if __name__ == "__main__":
-    env = ChemotherapyEnv()
-    horizon = 10  # MPC lookahead steps
 
-    print("Starting MPC simulation...")
-    state_hist, action_hist = run_mpc(env, horizon=horizon)
-    print("Simulation complete. Plotting results...")
-    plot_trajectory(state_hist, action_hist, dt=env.dt)
+if __name__ == "__main__":
+    b_values = [0.02, 0.05, 0.25]
+    state_histories = []
+    action_histories = []
+
+    for b in b_values:
+        env = ChemotherapyEnv(reward_b=b)
+        state_hist, action_hist = run_mpc(env, horizon=10)
+        state_histories.append(state_hist)
+        action_histories.append(action_hist)
+
+    plot_multiple_b(state_histories, action_histories, b_values)
