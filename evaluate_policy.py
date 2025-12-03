@@ -5,8 +5,7 @@ from chemo_env import ChemotherapyEnv
 from ppo_train import MLPActorCritic
 
 
-def evaluate(num_steps=500):
-    env = ChemotherapyEnv()
+def evaluate(env, num_steps=500):
     obs_dim = 6
 
     # Load model
@@ -41,12 +40,13 @@ def evaluate(num_steps=500):
 
     states = np.array(states)
     actions = np.array(actions)
-    t = np.arange(len(states)) * env.dt
-    return states, actions, t
+    return states, actions
 
 
 if __name__ == "__main__":
-    states, actions, t = evaluate()
+    env = ChemotherapyEnv()
+    states, actions = evaluate(env)
+    t = np.arange(len(states)) * env.dt
 
     # Unpack states
     Pc, Qc, Cc = states[:,0], states[:,1], states[:,2]
