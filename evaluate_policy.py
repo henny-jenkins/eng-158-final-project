@@ -53,12 +53,14 @@ def evaluate(num_steps=500):
 
     axes[0].plot(t, Pc, label="Proliferative Cancer (P)")
     axes[0].plot(t, Qc, label="Quiescent Cancer (Q)")
+    axes[0].plot(t, Cc, label="Cancer Concentration")
     axes[0].set_title("Cancer Cell Dynamics")
     axes[0].set_xlabel("Time (days)")
     axes[0].legend()
 
     axes[1].plot(t, Pb, label="Proliferative Bone Marrow (P)")
     axes[1].plot(t, Qb, label="Quiescent Bone Marrow (Q)")
+    axes[1].plot(t, Cb, label="Bone Marrow Concentration")
     axes[1].set_title("Bone Marrow Dynamics")
     axes[1].set_xlabel("Time (days)")
     axes[1].legend()
