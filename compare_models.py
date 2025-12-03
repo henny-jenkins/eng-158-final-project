@@ -4,6 +4,65 @@ from chemo_env import ChemotherapyEnv
 from evaluate_policy import evaluate
 from mpc import run_mpc
 
+def compute_objective(env, states, actions, return_per_step=False):
+    """
+    Compute Eastman-style objective:
+        J = sum_t [ P_bm + Q_bm - (b/2)(1-u)^2 ] * dt
+    Robust to off-by-one: expects len(states) >= len(actions) and uses actions[i]
+    for the transition states[i] -> states[i+1].
+
+    If len(actions) == len(states), this will drop the last action (with a warning).
+    """
+    states = np.asarray(states)
+    actions = np.asarray(actions)
+
+    n_states = states.shape[0]
+    n_actions = actions.shape[0]
+
+    if n_states < 2:
+        raise ValueError("states must contain at least two timesteps to form one transition")
+
+    # Expected: n_states == n_actions + 1
+    if n_actions == n_states:
+        # Common mismatch: one action per state. We'll drop the final action so actions align with transitions.
+        print("Warning: len(actions) == len(states). Dropping last action to align transitions.")
+        actions = actions[:-1]
+        n_actions -= 1
+    elif n_actions > n_states - 1:
+        # More actions than transitions -> truncate actions
+        print("Warning: more actions than transitions; truncating actions to match transitions.")
+        actions = actions[: n_states - 1]
+        n_actions = actions.shape[0]
+    elif n_actions < n_states - 1:
+        # Fewer actions than transitions -> truncate states to match
+        print("Warning: fewer actions than transitions; truncating states to match actions.")
+        states = states[: n_actions + 1]
+        n_states = states.shape[0]
+
+    # Now n_states == n_actions + 1
+    dt = float(env.dt)
+    b = float(env.reward_b)
+
+    per_step_rewards = np.empty(n_actions, dtype=float)
+
+    for i in range(n_actions):
+        bm_start = states[i, 3:5]   # Pb, Qb at start
+        bm_end = states[i+1, 3:5]   # Pb, Qb at end
+        u = float(actions[i])
+
+        bm_val_start = float(bm_start[0] + bm_start[1])
+        bm_val_end = float(bm_end[0] + bm_end[1])
+
+        bm_integral = dt * 0.5 * (bm_val_start + bm_val_end)
+        action_penalty_integral = dt * (0.5 * b * (1.0 - u) ** 2)
+
+        per_step_rewards[i] = bm_integral - action_penalty_integral
+
+    J = float(np.sum(per_step_rewards))
+    if return_per_step:
+        return J, per_step_rewards
+    return J
+
 
 if __name__ == "__main__":
     env = ChemotherapyEnv()     # define env
@@ -22,6 +81,16 @@ if __name__ == "__main__":
 
     Pc_mpc, Qc_mpc, Cc_mpc = states_mpc[:,0], states_mpc[:,1], states_mpc[:,2]
     Pb_mpc, Qb_mpc, Cb_mpc = states_mpc[:,3], states_mpc[:,4], states_mpc[:,5]
+
+
+    # --- compute objective functionals ---
+    J_ppo = compute_objective(env, states_ppo, actions_ppo)
+    J_mpc = compute_objective(env, states_mpc, actions_mpc)
+
+    print("\n===== Objective Functional Scores =====")
+    print(f"PPO objective J = {J_ppo:.4f}")
+    print(f"MPC objective J = {J_mpc:.4f}")
+    print("=======================================\n")
 
     # Plotting
     fig, axes = plt.subplots(3, 1, figsize=(10, 12))
