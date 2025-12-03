@@ -106,7 +106,9 @@ class ChemotherapyEnv:
     def reset(self) -> np.ndarray:
         """
         Reset episode to t=0 with initial populations.
-        Returns normalized state.
+
+        Returns:
+            A normalized observation vector of shape (6,).
         """
         self.t = 0.0
 
@@ -117,13 +119,20 @@ class ChemotherapyEnv:
         cancer_init[:2] *= self.rng.normal(loc=1.0, scale=0.02, size=2)
         bm_init[:2] *= self.rng.normal(loc=1.0, scale=0.02, size=2)
 
+        # self.state is a flat numpy array of shape (6,) representing the full state
         self.state = np.concatenate([cancer_init, bm_init]).astype(float)
+
         return self._normalize_state(self.state)
 
     def step(self, action: float):
         """
         Take one step given a scalar action in [0, 1].
-        Returns: (next_state_norm, reward, done, info)
+
+        Returns:
+            observation (np.ndarray): The full, normalized state vector of shape (6,).
+            reward (float): The reward for the current step.
+            done (bool): Whether the episode has terminated.
+            info (dict): A dictionary with auxiliary information.
         """
         # Clip action to [0, 1]
         u_scalar = float(np.clip(action, 0.0, 1.0))
@@ -132,7 +141,6 @@ class ChemotherapyEnv:
         t_span = (self.t, self.t + self.dt)
         t_eval = [self.t + self.dt]
 
-        u_arr = np.array([u_scalar, u_scalar])  # dummy x; we'll just return constant
         u = interp1d([self.t, self.t + self.dt], [u_scalar, u_scalar], fill_value="extrapolate")
 
         # Split current state
@@ -160,6 +168,7 @@ class ChemotherapyEnv:
             atol=1e-8,
         )
 
+        # TODO: fix the state definition
         new_cancer_state = cancer_sol.y[:, -1]
         new_bm_state = bm_sol.y[:, -1]
         new_state = np.concatenate([new_cancer_state, new_bm_state])
@@ -193,10 +202,6 @@ class ChemotherapyEnv:
 
         reward = -tumor_penalty + bm_reward - self.lambda_u * drug_penalty
 
-        # Extra toxicity penalty if bone marrow is very low
-        if bm_load < self.min_bm_fraction:
-            reward -= self.lambda_toxic * (self.min_bm_fraction - bm_load) * 10.0
-
         return float(reward)
 
     def _check_done(self, state: np.ndarray):
@@ -226,11 +231,11 @@ class ChemotherapyEnv:
 
     def _normalize_state(self, state: np.ndarray) -> np.ndarray:
         """
-        Basic normalization: assume P,Q in [0, 1.5], C in [0, ~1/rho].
+        Basic normalization: assume P,Q in [0, 1], C in [0, ~1/rho].
         """
         pc, qc, cc, pb, qb, cb = state
 
-        max_pq = 1.5
+        max_pq = 1
         max_c = 1.0 / self.sim_params.rho  # rough steady-state level
 
         norm = np.array([
