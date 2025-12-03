@@ -41,13 +41,16 @@ def evaluate(num_steps=500):
 
     states = np.array(states)
     actions = np.array(actions)
+    t = np.arange(len(states)) * env.dt
+    return states, actions, t
+
+
+if __name__ == "__main__":
+    states, actions, t = evaluate()
 
     # Unpack states
     Pc, Qc, Cc = states[:,0], states[:,1], states[:,2]
     Pb, Qb, Cb = states[:,3], states[:,4], states[:,5]
-
-    t = np.arange(len(states)) * env.dt
-
     # Plotting
     fig, axes = plt.subplots(3, 1, figsize=(10, 12))
 
@@ -73,7 +76,3 @@ def evaluate(num_steps=500):
 
     plt.tight_layout()
     plt.show()
-
-
-if __name__ == "__main__":
-    evaluate()
